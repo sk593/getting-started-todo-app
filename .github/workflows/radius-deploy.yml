@@ -157,12 +157,12 @@ jobs:
             kubectl patch deployment $deploy -n radius-system --type=json -p="$PATCH"
           done
           echo "Waiting for rollouts..."
-          kubectl rollout status deployment/applications-rp -n radius-system --timeout=120s
-          kubectl rollout status deployment/dynamic-rp -n radius-system --timeout=120s
+          kubectl rollout status deployment/applications-rp -n radius-system --timeout=300s
+          kubectl rollout status deployment/dynamic-rp -n radius-system --timeout=300s
           echo ""
           echo "Waiting for pods to be ready..."
-          kubectl wait --for=condition=Ready pod -l app.kubernetes.io/name=applications-rp -n radius-system --timeout=120s
-          kubectl wait --for=condition=Ready pod -l app.kubernetes.io/name=dynamic-rp -n radius-system --timeout=120s
+          kubectl wait --for=condition=Ready pod -l app.kubernetes.io/name=applications-rp -n radius-system --timeout=300s
+          kubectl wait --for=condition=Ready pod -l app.kubernetes.io/name=dynamic-rp -n radius-system --timeout=300s
           echo "External deployment target configured successfully"
 
       - name: Configure Radius environment
