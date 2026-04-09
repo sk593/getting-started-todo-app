@@ -216,6 +216,26 @@ jobs:
           rad app list || true
           rad resource list --environment "$ENVIRONMENT" || true
 
+      - name: Collect Radius logs
+        if: always()
+        run: |
+          mkdir -p /tmp/radius-logs
+          for deploy in applications-rp dynamic-rp bicep-de controller ucpd; do
+            echo "=== $deploy ===" >> /tmp/radius-logs/pods.txt
+            kubectl logs -n radius-system -l app.kubernetes.io/name=$deploy --tail=200 >> /tmp/radius-logs/$deploy.log 2>&1 || true
+            kubectl describe pods -n radius-system -l app.kubernetes.io/name=$deploy >> /tmp/radius-logs/$deploy-describe.txt 2>&1 || true
+          done
+          kubectl get pods -n radius-system -o wide >> /tmp/radius-logs/pods.txt 2>&1 || true
+          kubectl get events -n radius-system --sort-by=.lastTimestamp >> /tmp/radius-logs/events.txt 2>&1 || true
+
+      - name: Upload Radius logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: radius-logs
+          path: /tmp/radius-logs/
+          retention-days: 3
+
       - name: Cleanup control plane cluster
         if: always()
         run: k3d cluster delete radius-cp || true
