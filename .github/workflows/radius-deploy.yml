@@ -94,7 +94,14 @@ jobs:
 
       - name: Install Radius on control plane
         run: |
-          rad install kubernetes --set rp.publicEndpointOverride=localhost
+          INSTALL_ARGS="--set rp.publicEndpointOverride=localhost"
+          if [ -n "${{ vars.RADIUS_IMAGE_REGISTRY }}" ]; then
+            INSTALL_ARGS="$INSTALL_ARGS --set global.imageRegistry=${{ vars.RADIUS_IMAGE_REGISTRY }}"
+          fi
+          if [ -n "${{ vars.RADIUS_IMAGE_TAG }}" ]; then
+            INSTALL_ARGS="$INSTALL_ARGS --set global.imageTag=${{ vars.RADIUS_IMAGE_TAG }}"
+          fi
+          rad install kubernetes $INSTALL_ARGS
           kubectl wait --for=condition=Available deployment --all -n radius-system --timeout=300s
 
       - name: Configure external deployment target
@@ -113,18 +120,16 @@ jobs:
             {"op":"add","path":"/spec/template/spec/containers/0/volumeMounts/-","value":{"name":"target-kubeconfig","mountPath":"/etc/radius/target-kubeconfig","readOnly":true}},
             {"op":"add","path":"/spec/template/spec/containers/0/env/-","value":{"name":"RADIUS_TARGET_KUBECONFIG","value":"/etc/radius/target-kubeconfig/config"}}
           ]'
-          PATCH_DE='[
-            {"op":"add","path":"/spec/template/spec/automountServiceAccountToken","value":false},
-            {"op":"add","path":"/spec/template/spec/volumes/-","value":{"name":"target-kubeconfig","secret":{"secretName":"target-kubeconfig"}}},
-            {"op":"add","path":"/spec/template/spec/containers/0/volumeMounts/-","value":{"name":"target-kubeconfig","mountPath":"/root/.kube","readOnly":true}},
-            {"op":"add","path":"/spec/template/spec/containers/0/env/-","value":{"name":"KUBECONFIG","value":"/root/.kube/config"}}
-          ]'
-          kubectl patch deployment applications-rp -n radius-system --type=json -p="$PATCH"
-          kubectl patch deployment dynamic-rp -n radius-system --type=json -p="$PATCH"
-          kubectl patch deployment bicep-de -n radius-system --type=json -p="$PATCH_DE"
+          for deploy in applications-rp dynamic-rp; do
+            kubectl patch deployment $deploy -n radius-system --type=json -p="$PATCH"
+          done
+          echo "Waiting for rollouts..."
           kubectl rollout status deployment/applications-rp -n radius-system --timeout=120s
           kubectl rollout status deployment/dynamic-rp -n radius-system --timeout=120s
-          kubectl rollout status deployment/bicep-de -n radius-system --timeout=120s
+          echo ""
+          echo "Waiting for pods to be ready..."
+          kubectl wait --for=condition=Ready pod -l app.kubernetes.io/name=applications-rp -n radius-system --timeout=120s
+          kubectl wait --for=condition=Ready pod -l app.kubernetes.io/name=dynamic-rp -n radius-system --timeout=120s
           echo "External deployment target configured successfully"
 
       - name: Configure Radius environment
@@ -158,9 +163,19 @@ jobs:
       - name: Deploy application
         run: |
           echo "Deploying $APP_FILE to environment $ENVIRONMENT..."
-          rad deploy "$APP_FILE" --environment "$ENVIRONMENT" --parameters applicationName="$APP_NAME"
-          echo ""
-          echo "✅ Deployment complete."
+          for attempt in 1 2 3; do
+            if rad deploy "$APP_FILE" --environment "$ENVIRONMENT" --parameters applicationName="$APP_NAME"; then
+              echo ""
+              echo "✅ Deployment complete."
+              exit 0
+            fi
+            if [ $attempt -lt 3 ]; then
+              echo "Deploy attempt $attempt failed, retrying in 30s..."
+              sleep 30
+            fi
+          done
+          echo "❌ Deployment failed after 3 attempts."
+          exit 1
 
       - name: Show application status
         if: always()
