@@ -97,9 +97,16 @@ jobs:
           INSTALL_ARGS="--set rp.publicEndpointOverride=localhost"
           if [ -n "${{ vars.RADIUS_IMAGE_REGISTRY }}" ]; then
             INSTALL_ARGS="$INSTALL_ARGS --set global.imageRegistry=${{ vars.RADIUS_IMAGE_REGISTRY }}"
+            # Pin deployment-engine and dashboard to the public registry since
+            # they are not built from this repo.
+            INSTALL_ARGS="$INSTALL_ARGS --set de.image=ghcr.io/radius-project/deployment-engine"
+            INSTALL_ARGS="$INSTALL_ARGS --set dashboard.image=ghcr.io/radius-project/dashboard"
           fi
           if [ -n "${{ vars.RADIUS_IMAGE_TAG }}" ]; then
             INSTALL_ARGS="$INSTALL_ARGS --set global.imageTag=${{ vars.RADIUS_IMAGE_TAG }}"
+            # Keep DE and dashboard on the released version.
+            INSTALL_ARGS="$INSTALL_ARGS --set de.tag=latest"
+            INSTALL_ARGS="$INSTALL_ARGS --set dashboard.tag=latest"
           fi
           rad install kubernetes $INSTALL_ARGS
           kubectl wait --for=condition=Available deployment --all -n radius-system --timeout=300s
