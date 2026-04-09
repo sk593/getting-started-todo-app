@@ -21,6 +21,10 @@ on:
         description: 'Bicep application file to deploy'
         required: true
         default: 'app.bicep'
+      app_name:
+        description: 'Application name'
+        required: false
+        default: 'app'
 
 permissions:
   id-token: write
@@ -29,6 +33,7 @@ permissions:
 env:
   ENVIRONMENT: ${{ inputs.environment || 'dev' }}
   APP_FILE: ${{ inputs.app_file || 'app.bicep' }}
+  APP_NAME: ${{ inputs.app_name || 'app' }}
 
 jobs:
   deploy:
@@ -153,7 +158,11 @@ jobs:
       - name: Deploy application
         run: |
           echo "Deploying $APP_FILE to environment $ENVIRONMENT..."
-          rad deploy "$APP_FILE" --environment "$ENVIRONMENT"
+          if [ -n "$APP_NAME" ] && [ "$APP_NAME" != "app" ]; then
+            rad deploy "$APP_FILE" --environment "$ENVIRONMENT" --parameters applicationName="$APP_NAME"
+          else
+            rad deploy "$APP_FILE" --environment "$ENVIRONMENT"
+          fi
           echo ""
           echo "✅ Deployment complete."
 
