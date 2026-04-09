@@ -158,11 +158,7 @@ jobs:
       - name: Deploy application
         run: |
           echo "Deploying $APP_FILE to environment $ENVIRONMENT..."
-          if [ -n "$APP_NAME" ] && [ "$APP_NAME" != "app" ]; then
-            rad deploy "$APP_FILE" --environment "$ENVIRONMENT" --parameters applicationName="$APP_NAME"
-          else
-            rad deploy "$APP_FILE" --environment "$ENVIRONMENT"
-          fi
+          rad deploy "$APP_FILE" --environment "$ENVIRONMENT" --parameters applicationName="$APP_NAME"
           echo ""
           echo "✅ Deployment complete."
 
