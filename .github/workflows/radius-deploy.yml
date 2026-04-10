@@ -161,6 +161,37 @@ jobs:
             echo "No target kubeconfig found, resources will deploy to k3d cluster"
             exit 0
           fi
+
+          # Refresh EKS token if using AWS (tokens expire after ~15 min).
+          if [ -n "${{ vars.AWS_IAM_ROLE_ARN }}" ] && [ -n "${{ vars.RADIUS_K8S_CLUSTER }}" ]; then
+            echo "Refreshing EKS token..."
+            CLUSTER="${{ vars.RADIUS_K8S_CLUSTER }}"
+            REGION="${{ vars.AWS_REGION }}"
+            ENDPOINT=$(aws eks describe-cluster --name "$CLUSTER" --region "$REGION" --query 'cluster.endpoint' --output text)
+            CA_DATA=$(aws eks describe-cluster --name "$CLUSTER" --region "$REGION" --query 'cluster.certificateAuthority.data' --output text)
+            TOKEN=$(aws eks get-token --cluster-name "$CLUSTER" --region "$REGION" --output json | jq -r '.status.token')
+            cat > "$TARGET_KUBECONFIG" <<KUBEEOF
+          apiVersion: v1
+          clusters:
+          - cluster:
+              certificate-authority-data: $CA_DATA
+              server: $ENDPOINT
+            name: eks
+          contexts:
+          - context:
+              cluster: eks
+              user: eks-user
+            name: eks
+          current-context: eks
+          kind: Config
+          users:
+          - name: eks-user
+            user:
+              token: $TOKEN
+          KUBEEOF
+            echo "EKS token refreshed"
+          fi
+
           echo "Configuring Radius to deploy to external target cluster..."
           kubectl create secret generic target-kubeconfig \
             --namespace radius-system \
@@ -209,6 +240,43 @@ jobs:
 
       - name: Deploy application
         run: |
+          # Refresh the target kubeconfig secret with a fresh EKS token before deploying.
+          if [ -n "${{ vars.AWS_IAM_ROLE_ARN }}" ] && [ -n "${{ vars.RADIUS_K8S_CLUSTER }}" ]; then
+            echo "Refreshing EKS token for deployment..."
+            CLUSTER="${{ vars.RADIUS_K8S_CLUSTER }}"
+            REGION="${{ vars.AWS_REGION }}"
+            ENDPOINT=$(aws eks describe-cluster --name "$CLUSTER" --region "$REGION" --query 'cluster.endpoint' --output text)
+            CA_DATA=$(aws eks describe-cluster --name "$CLUSTER" --region "$REGION" --query 'cluster.certificateAuthority.data' --output text)
+            TOKEN=$(aws eks get-token --cluster-name "$CLUSTER" --region "$REGION" --output json | jq -r '.status.token')
+            TARGET_KUBECONFIG="/tmp/fresh-kubeconfig"
+            cat > "$TARGET_KUBECONFIG" <<KUBEEOF
+          apiVersion: v1
+          clusters:
+          - cluster:
+              certificate-authority-data: $CA_DATA
+              server: $ENDPOINT
+            name: eks
+          contexts:
+          - context:
+              cluster: eks
+              user: eks-user
+            name: eks
+          current-context: eks
+          kind: Config
+          users:
+          - name: eks-user
+            user:
+              token: $TOKEN
+          KUBEEOF
+            kubectl delete secret target-kubeconfig -n radius-system --ignore-not-found
+            kubectl create secret generic target-kubeconfig --namespace radius-system --from-file=config="$TARGET_KUBECONFIG"
+            echo "Token refreshed, restarting applications-rp..."
+            kubectl rollout restart deployment/applications-rp -n radius-system
+            kubectl rollout restart deployment/dynamic-rp -n radius-system
+            kubectl rollout status deployment/applications-rp -n radius-system --timeout=300s
+            kubectl rollout status deployment/dynamic-rp -n radius-system --timeout=300s
+          fi
+
           echo "Deploying $APP_FILE to environment $ENVIRONMENT..."
           for attempt in 1 2 3; do
             if rad deploy "$APP_FILE" --environment "$ENVIRONMENT" --parameters applicationName="$APP_NAME"; then
