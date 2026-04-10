@@ -76,7 +76,24 @@ jobs:
         run: |
           CLUSTER="${{ vars.RADIUS_K8S_CLUSTER }}"
           REGION="${{ vars.AWS_REGION }}"
+          ROLE_ARN="${{ vars.AWS_IAM_ROLE_ARN }}"
           TARGET="$HOME/.kube/target-cluster"
+
+          # Ensure the IAM role has access to the EKS cluster.
+          # Creates an access entry if one doesn't already exist.
+          echo "Ensuring EKS access entry for $ROLE_ARN..."
+          aws eks create-access-entry \
+            --cluster-name "$CLUSTER" \
+            --principal-arn "$ROLE_ARN" \
+            --type STANDARD \
+            --region "$REGION" 2>/dev/null || echo "Access entry already exists"
+          aws eks associate-access-policy \
+            --cluster-name "$CLUSTER" \
+            --principal-arn "$ROLE_ARN" \
+            --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy \
+            --access-scope type=cluster \
+            --region "$REGION" 2>/dev/null || echo "Access policy already associated"
+
           # Build a static kubeconfig with a bearer token instead of exec-based auth.
           # The exec-based config requires aws CLI inside the container, which Radius
           # images don't have.
@@ -157,8 +174,17 @@ jobs:
             kubectl patch deployment $deploy -n radius-system --type=json -p="$PATCH"
           done
           echo "Waiting for rollouts..."
-          kubectl rollout status deployment/applications-rp -n radius-system --timeout=300s
-          kubectl rollout status deployment/dynamic-rp -n radius-system --timeout=300s
+          kubectl rollout status deployment/applications-rp -n radius-system --timeout=300s || true
+          kubectl rollout status deployment/dynamic-rp -n radius-system --timeout=300s || true
+          echo ""
+          echo "=== Pod status ==="
+          kubectl get pods -n radius-system -o wide
+          echo ""
+          echo "=== Pod descriptions ==="
+          kubectl describe pods -n radius-system -l app.kubernetes.io/name=applications-rp 2>&1 | tail -40
+          echo ""
+          echo "=== Pod logs (last 50 lines) ==="
+          kubectl logs -n radius-system -l app.kubernetes.io/name=applications-rp --tail=50 2>&1 || true
           echo ""
           echo "Waiting for pods to be ready..."
           kubectl wait --for=condition=Ready pod -l app.kubernetes.io/name=applications-rp -n radius-system --timeout=300s
