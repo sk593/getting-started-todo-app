@@ -239,7 +239,6 @@ jobs:
         if: always()
         run: |
           rad app list || true
-          rad resource list --environment "$ENVIRONMENT" || true
 
       - name: Collect Radius logs
         if: always()
