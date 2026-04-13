@@ -224,19 +224,9 @@ jobs:
           fi
 
           echo "Deploying $APP_FILE to environment $ENVIRONMENT..."
-          for attempt in 1 2 3; do
-            if rad deploy "$APP_FILE" --environment "$ENVIRONMENT" --parameters applicationName="$APP_NAME"; then
-              echo ""
-              echo "✅ Deployment complete."
-              exit 0
-            fi
-            if [ $attempt -lt 3 ]; then
-              echo "Deploy attempt $attempt failed, retrying in 30s..."
-              sleep 30
-            fi
-          done
-          echo "❌ Deployment failed after 3 attempts."
-          exit 1
+          rad deploy "$APP_FILE" --environment "$ENVIRONMENT" --parameters applicationName="$APP_NAME"
+          echo ""
+          echo "✅ Deployment complete."
 
       - name: Show application status
         if: always()
