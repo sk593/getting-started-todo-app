@@ -136,55 +136,50 @@ jobs:
           rad install kubernetes $INSTALL_ARGS
           kubectl wait --for=condition=Available deployment --all -n radius-system --timeout=300s
 
-      - name: Configure external deployment target and deploy
+      - name: Configure external deployment target
         run: |
           TARGET_KUBECONFIG="$HOME/.kube/target-cluster"
-          HAS_TARGET="false"
 
-          if [ -f "$TARGET_KUBECONFIG" ]; then
-            # Refresh EKS token right before creating the secret.
-            if [ -n "${{ vars.AWS_IAM_ROLE_ARN }}" ] && [ -n "${{ vars.RADIUS_K8S_CLUSTER }}" ]; then
-              echo "Generating fresh EKS token..."
-              CLUSTER="${{ vars.RADIUS_K8S_CLUSTER }}"
-              REGION="${{ vars.AWS_REGION }}"
-              ENDPOINT=$(aws eks describe-cluster --name "$CLUSTER" --region "$REGION" --query 'cluster.endpoint' --output text)
-              CA_DATA=$(aws eks describe-cluster --name "$CLUSTER" --region "$REGION" --query 'cluster.certificateAuthority.data' --output text)
-              TOKEN=$(aws eks get-token --cluster-name "$CLUSTER" --region "$REGION" --output json | jq -r '.status.token')
-              printf 'apiVersion: v1\nclusters:\n- cluster:\n    certificate-authority-data: %s\n    server: %s\n  name: eks\ncontexts:\n- context:\n    cluster: eks\n    user: eks-user\n  name: eks\ncurrent-context: eks\nkind: Config\nusers:\n- name: eks-user\n  user:\n    token: %s\n' "$CA_DATA" "$ENDPOINT" "$TOKEN" > "$TARGET_KUBECONFIG"
-            fi
-
-            echo "Configuring Radius to deploy to external target cluster..."
-            kubectl delete secret target-kubeconfig -n radius-system --ignore-not-found
-            kubectl create secret generic target-kubeconfig --namespace radius-system --from-file=config="$TARGET_KUBECONFIG"
-
-            # Check if deployments already have the volume mount (from a previous run).
-            if ! kubectl get deployment applications-rp -n radius-system -o jsonpath='{.spec.template.spec.volumes[*].name}' | grep -q target-kubeconfig; then
-              PATCH='[
-                {"op":"add","path":"/spec/template/spec/volumes/-","value":{"name":"target-kubeconfig","secret":{"secretName":"target-kubeconfig"}}},
-                {"op":"add","path":"/spec/template/spec/containers/0/volumeMounts/-","value":{"name":"target-kubeconfig","mountPath":"/etc/radius/target-kubeconfig","readOnly":true}},
-                {"op":"add","path":"/spec/template/spec/containers/0/env/-","value":{"name":"RADIUS_TARGET_KUBECONFIG","value":"/etc/radius/target-kubeconfig/config"}}
-              ]'
-              for deploy in applications-rp dynamic-rp; do
-                kubectl patch deployment $deploy -n radius-system --type=json -p="$PATCH"
-              done
-            else
-              # Secret updated — restart pods to pick up new token.
-              kubectl rollout restart deployment/applications-rp -n radius-system
-              kubectl rollout restart deployment/dynamic-rp -n radius-system
-            fi
-
-            echo "Waiting for rollouts..."
-            kubectl rollout status deployment/applications-rp -n radius-system --timeout=300s
-            kubectl rollout status deployment/dynamic-rp -n radius-system --timeout=300s
-            echo "External deployment target configured."
-            HAS_TARGET="true"
+          if [ ! -f "$TARGET_KUBECONFIG" ]; then
+            echo "No target kubeconfig found, resources will deploy to k3d cluster"
+            exit 0
           fi
 
-          # Deploy immediately after pods are ready — token is fresh.
-          echo "Deploying $APP_FILE to environment $ENVIRONMENT..."
-          rad deploy "$APP_FILE" --environment "$ENVIRONMENT" --parameters applicationName="$APP_NAME"
-          echo ""
-          echo "✅ Deployment complete."
+          # Refresh EKS token right before creating the secret.
+          if [ -n "${{ vars.AWS_IAM_ROLE_ARN }}" ] && [ -n "${{ vars.RADIUS_K8S_CLUSTER }}" ]; then
+            echo "Generating fresh EKS token..."
+            CLUSTER="${{ vars.RADIUS_K8S_CLUSTER }}"
+            REGION="${{ vars.AWS_REGION }}"
+            ENDPOINT=$(aws eks describe-cluster --name "$CLUSTER" --region "$REGION" --query 'cluster.endpoint' --output text)
+            CA_DATA=$(aws eks describe-cluster --name "$CLUSTER" --region "$REGION" --query 'cluster.certificateAuthority.data' --output text)
+            TOKEN=$(aws eks get-token --cluster-name "$CLUSTER" --region "$REGION" --output json | jq -r '.status.token')
+            printf 'apiVersion: v1\nclusters:\n- cluster:\n    certificate-authority-data: %s\n    server: %s\n  name: eks\ncontexts:\n- context:\n    cluster: eks\n    user: eks-user\n  name: eks\ncurrent-context: eks\nkind: Config\nusers:\n- name: eks-user\n  user:\n    token: %s\n' "$CA_DATA" "$ENDPOINT" "$TOKEN" > "$TARGET_KUBECONFIG"
+          fi
+
+          echo "Configuring Radius to deploy to external target cluster..."
+          kubectl delete secret target-kubeconfig -n radius-system --ignore-not-found
+          kubectl create secret generic target-kubeconfig --namespace radius-system --from-file=config="$TARGET_KUBECONFIG"
+
+          # Check if deployments already have the volume mount (from a previous run).
+          if ! kubectl get deployment applications-rp -n radius-system -o jsonpath='{.spec.template.spec.volumes[*].name}' | grep -q target-kubeconfig; then
+            PATCH='[
+              {"op":"add","path":"/spec/template/spec/volumes/-","value":{"name":"target-kubeconfig","secret":{"secretName":"target-kubeconfig"}}},
+              {"op":"add","path":"/spec/template/spec/containers/0/volumeMounts/-","value":{"name":"target-kubeconfig","mountPath":"/etc/radius/target-kubeconfig","readOnly":true}},
+              {"op":"add","path":"/spec/template/spec/containers/0/env/-","value":{"name":"RADIUS_TARGET_KUBECONFIG","value":"/etc/radius/target-kubeconfig/config"}}
+            ]'
+            for deploy in applications-rp dynamic-rp; do
+              kubectl patch deployment $deploy -n radius-system --type=json -p="$PATCH"
+            done
+          else
+            # Secret updated — restart pods to pick up new token.
+            kubectl rollout restart deployment/applications-rp -n radius-system
+            kubectl rollout restart deployment/dynamic-rp -n radius-system
+          fi
+
+          echo "Waiting for rollouts..."
+          kubectl rollout status deployment/applications-rp -n radius-system --timeout=300s
+          kubectl rollout status deployment/dynamic-rp -n radius-system --timeout=300s
+          echo "External deployment target configured."
 
       - name: Configure Radius environment
         run: |
