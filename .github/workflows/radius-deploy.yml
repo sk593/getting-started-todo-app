@@ -181,8 +181,27 @@ jobs:
           kubectl exec -n radius-system "$POD" -c dynamic-rp -- docker version
           kubectl exec -n radius-system "$POD" -c dynamic-rp -- ls /app/demo/Dockerfile
 
-          # Log in to GHCR so the Docker provider can push images
-          echo "${{ secrets.GITHUB_TOKEN }}" | kubectl exec -i -n radius-system "$POD" -c dynamic-rp --             docker login ghcr.io -u token --password-stdin
+          # Create a Docker config secret for GHCR authentication so Terraform's Docker provider can push images.
+          # This is mounted as a volume so it persists across pod restarts.
+          DOCKER_CONFIG_JSON=$(echo -n '{"auths":{"ghcr.io":{"auth":"'$(echo -n "token:${{ secrets.GITHUB_TOKEN }}" | base64 -w0)'"}}}')
+          kubectl create secret generic docker-config -n radius-system --from-literal=config.json="$DOCKER_CONFIG_JSON" --dry-run=client -o yaml | kubectl apply -f -
+
+          # Mount the docker config secret into dynamic-rp and set DOCKER_CONFIG
+          kubectl patch deployment dynamic-rp -n radius-system --type=json -p='[
+            {"op": "add", "path": "/spec/template/spec/volumes/-",
+             "value": {"name": "docker-config", "secret": {"secretName": "docker-config"}}},
+            {"op": "add", "path": "/spec/template/spec/containers/0/volumeMounts/-",
+             "value": {"name": "docker-config", "mountPath": "/root/.docker"}},
+            {"op": "add", "path": "/spec/template/spec/containers/0/env/-",
+             "value": {"name": "DOCKER_CONFIG", "value": "/root/.docker"}}
+          ]'
+          kubectl rollout status deployment/dynamic-rp -n radius-system --timeout=120s
+          sleep 10
+          kubectl wait --for=condition=Ready pod -n radius-system -l app.kubernetes.io/name=dynamic-rp --timeout=120s
+
+          # Verify docker auth is available
+          POD=$(kubectl get pods -n radius-system -l app.kubernetes.io/name=dynamic-rp --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}')
+          kubectl exec -n radius-system "$POD" -c dynamic-rp -- cat /root/.docker/config.json
 
       - name: Configure external deployment target
         run: |
