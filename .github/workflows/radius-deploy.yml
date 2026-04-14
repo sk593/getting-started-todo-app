@@ -25,6 +25,10 @@ on:
         description: 'Application name'
         required: false
         default: 'app'
+      image:
+        description: 'Container image for the application (e.g. ghcr.io/sk593/demo:latest)'
+        required: false
+        default: ''
 
 permissions:
   id-token: write
@@ -35,6 +39,7 @@ env:
   ENVIRONMENT: ${{ inputs.environment || 'dev' }}
   APP_FILE: ${{ inputs.app_file || 'app.bicep' }}
   APP_NAME: ${{ inputs.app_name || 'app' }}
+  APP_IMAGE: ${{ inputs.image || vars.RADIUS_APP_IMAGE || '' }}
   RESOURCE_TYPES_CONTRIB_REPO: https://github.com/willdavsmith/resource-types-contrib.git
   RESOURCE_TYPES_CONTRIB_REF: 2abf6c45bba91edfe4e39d94da1d1d49aadcb456
 
@@ -257,7 +262,11 @@ jobs:
           fi
 
           echo "Deploying $APP_FILE to environment $ENVIRONMENT..."
-          rad deploy "$APP_FILE" --environment "$ENVIRONMENT" --parameters applicationName="$APP_NAME"
+          DEPLOY_PARAMS="--parameters applicationName=$APP_NAME"
+          if [ -n "$APP_IMAGE" ]; then
+            DEPLOY_PARAMS="$DEPLOY_PARAMS --parameters image=$APP_IMAGE"
+          fi
+          rad deploy "$APP_FILE" --environment "$ENVIRONMENT" $DEPLOY_PARAMS
           echo ""
           echo "✅ Deployment complete."
 
