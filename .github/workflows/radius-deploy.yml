@@ -40,8 +40,8 @@ env:
   APP_FILE: ${{ inputs.app_file || 'app.bicep' }}
   APP_NAME: ${{ inputs.app_name || 'app' }}
   APP_IMAGE: ${{ inputs.image || vars.RADIUS_APP_IMAGE || '' }}
-  RESOURCE_TYPES_CONTRIB_REPO: https://github.com/willdavsmith/resource-types-contrib.git
-  RESOURCE_TYPES_CONTRIB_REF: 2abf6c45bba91edfe4e39d94da1d1d49aadcb456
+  RESOURCE_TYPES_CONTRIB_REPO: https://github.com/radius-project/resource-types-contrib.git
+  RESOURCE_TYPES_CONTRIB_REF: docker-provider
 
 jobs:
   deploy:
@@ -137,21 +137,39 @@ jobs:
             --set dashboard.tag=latest
           kubectl wait --for=condition=Available deployment --all -n radius-system --timeout=300s
 
-      - name: Patch dynamic-rp RBAC for batch/jobs
+      - name: Patch dynamic-rp with Docker support
         run: |
-          kubectl patch clusterrole dynamic-rp --type=json -p='[
-            {
-              "op": "add",
-              "path": "/rules/-",
-              "value": {
-                "apiGroups": ["batch"],
-                "resources": ["jobs", "jobs/status"],
-                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"]
-              }
-            }
+          # Mount Docker socket, source directory, install docker-cli via init container,
+          # and run as root to access the socket
+          kubectl patch deployment dynamic-rp -n radius-system --type=json -p='[
+            {"op": "add", "path": "/spec/template/spec/volumes/-",
+             "value": {"name": "docker-sock", "hostPath": {"path": "/var/run/docker.sock", "type": "Socket"}}},
+            {"op": "add", "path": "/spec/template/spec/volumes/-",
+             "value": {"name": "docker-bin", "emptyDir": {}}},
+            {"op": "add", "path": "/spec/template/spec/volumes/-",
+             "value": {"name": "app-source", "hostPath": {"path": "/app/demo", "type": "Directory"}}},
+            {"op": "add", "path": "/spec/template/spec/containers/0/volumeMounts/-",
+             "value": {"name": "docker-sock", "mountPath": "/var/run/docker.sock"}},
+            {"op": "add", "path": "/spec/template/spec/containers/0/volumeMounts/-",
+             "value": {"name": "docker-bin", "mountPath": "/usr/local/bin/docker", "subPath": "docker"}},
+            {"op": "add", "path": "/spec/template/spec/containers/0/volumeMounts/-",
+             "value": {"name": "app-source", "mountPath": "/app/demo", "readOnly": true}},
+            {"op": "replace", "path": "/spec/template/spec/containers/0/securityContext",
+             "value": {"allowPrivilegeEscalation": false, "runAsUser": 0}},
+            {"op": "add", "path": "/spec/template/spec/initContainers/-",
+             "value": {
+               "name": "install-docker-cli",
+               "image": "docker:cli",
+               "command": ["cp", "/usr/local/bin/docker", "/out/docker"],
+               "volumeMounts": [{"name": "docker-bin", "mountPath": "/out"}]
+             }}
           ]'
-          kubectl rollout restart deployment/dynamic-rp -n radius-system
-          kubectl rollout status deployment/dynamic-rp -n radius-system --timeout=60s
+          kubectl rollout status deployment/dynamic-rp -n radius-system --timeout=120s
+
+          # Verify docker and source are accessible
+          POD=$(kubectl get pods -n radius-system -l app.kubernetes.io/name=dynamic-rp -o jsonpath='{.items[0].metadata.name}')
+          kubectl exec -n radius-system "$POD" -c dynamic-rp -- docker version
+          kubectl exec -n radius-system "$POD" -c dynamic-rp -- ls /app/demo/Dockerfile
 
       - name: Configure external deployment target
         run: |
@@ -262,9 +280,9 @@ jobs:
           fi
 
           echo "Deploying $APP_FILE to environment $ENVIRONMENT..."
-          DEPLOY_PARAMS="--parameters applicationName=$APP_NAME"
+          DEPLOY_PARAMS=""
           if [ -n "$APP_IMAGE" ]; then
-            DEPLOY_PARAMS="$DEPLOY_PARAMS --parameters image=$APP_IMAGE"
+            DEPLOY_PARAMS="--parameters image=$APP_IMAGE"
           fi
           rad deploy "$APP_FILE" --environment "$ENVIRONMENT" $DEPLOY_PARAMS
           echo ""
