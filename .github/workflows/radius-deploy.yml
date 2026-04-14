@@ -125,6 +125,11 @@ jobs:
           wget -q "https://raw.githubusercontent.com/radius-project/radius/main/deploy/install.sh" -O - | /bin/bash
           rad version
 
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
       - name: Install Radius on control plane
         run: |
           rad install kubernetes \
