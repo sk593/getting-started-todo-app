@@ -117,7 +117,7 @@ jobs:
 
       - name: Create ephemeral Radius control plane cluster
         run: |
-          k3d cluster create radius-cp --wait
+          k3d cluster create radius-cp             --volume /var/run/docker.sock:/var/run/docker.sock             --wait
           kubectl wait --for=condition=Ready node --all --timeout=120s
 
       - name: Install Radius CLI
@@ -169,7 +169,9 @@ jobs:
           # Verify docker and source are accessible
           POD=$(kubectl get pods -n radius-system -l app.kubernetes.io/name=dynamic-rp -o jsonpath='{.items[0].metadata.name}')
           kubectl exec -n radius-system "$POD" -c dynamic-rp -- docker version
-          kubectl exec -n radius-system "$POD" -c dynamic-rp -- ls /app/demo/Dockerfile
+
+          # Log in to GHCR so the Docker provider can push images
+          echo "${{ secrets.GITHUB_TOKEN }}" | kubectl exec -i -n radius-system "$POD" -c dynamic-rp --             docker login ghcr.io -u token --password-stdin
 
       - name: Configure external deployment target
         run: |
