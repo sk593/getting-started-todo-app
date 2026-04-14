@@ -171,12 +171,15 @@ jobs:
           ]'
           kubectl rollout status deployment/dynamic-rp -n radius-system --timeout=120s
 
-          # Wait for the new pod to be fully ready before exec
+          # Wait for old pods to terminate, then get the running pod
+          sleep 10
+          kubectl delete pod -n radius-system -l app.kubernetes.io/name=dynamic-rp --field-selector=status.phase!=Running --ignore-not-found || true
           kubectl wait --for=condition=Ready pod -n radius-system -l app.kubernetes.io/name=dynamic-rp --timeout=120s
 
-          # Verify docker is accessible
-          POD=$(kubectl get pods -n radius-system -l app.kubernetes.io/name=dynamic-rp -o jsonpath='{.items[0].metadata.name}')
+          # Verify docker and source are accessible
+          POD=$(kubectl get pods -n radius-system -l app.kubernetes.io/name=dynamic-rp --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}')
           kubectl exec -n radius-system "$POD" -c dynamic-rp -- docker version
+          kubectl exec -n radius-system "$POD" -c dynamic-rp -- ls /app/demo/Dockerfile
 
           # Log in to GHCR so the Docker provider can push images
           echo "${{ secrets.GITHUB_TOKEN }}" | kubectl exec -i -n radius-system "$POD" -c dynamic-rp --             docker login ghcr.io -u token --password-stdin
