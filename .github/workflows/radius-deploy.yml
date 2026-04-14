@@ -29,11 +29,14 @@ on:
 permissions:
   id-token: write
   contents: read
+  packages: read
 
 env:
   ENVIRONMENT: ${{ inputs.environment || 'dev' }}
   APP_FILE: ${{ inputs.app_file || 'app.bicep' }}
   APP_NAME: ${{ inputs.app_name || 'app' }}
+  RESOURCE_TYPES_CONTRIB_REPO: https://github.com/willdavsmith/resource-types-contrib.git
+  RESOURCE_TYPES_CONTRIB_REF: 2abf6c45bba91edfe4e39d94da1d1d49aadcb456
 
 jobs:
   deploy:
@@ -136,6 +139,22 @@ jobs:
           rad install kubernetes $INSTALL_ARGS
           kubectl wait --for=condition=Available deployment --all -n radius-system --timeout=300s
 
+      - name: Patch dynamic-rp RBAC for batch/jobs
+        run: |
+          kubectl patch clusterrole dynamic-rp --type=json -p='[
+            {
+              "op": "add",
+              "path": "/rules/-",
+              "value": {
+                "apiGroups": ["batch"],
+                "resources": ["jobs", "jobs/status"],
+                "verbs": ["create", "delete", "get", "list", "patch", "update", "watch"]
+              }
+            }
+          ]'
+          kubectl rollout restart deployment/dynamic-rp -n radius-system
+          kubectl rollout status deployment/dynamic-rp -n radius-system --timeout=60s
+
       - name: Configure external deployment target
         run: |
           TARGET_KUBECONFIG="$HOME/.kube/target-cluster"
@@ -203,11 +222,25 @@ jobs:
       - name: Register AWS credentials with Radius
         if: ${{ vars.AWS_IAM_ROLE_ARN != '' }}
         run: |
-          rad credential register aws irsa \
-            --iam-role "${{ vars.AWS_IAM_ROLE_ARN }}"
-          rad env update "$ENVIRONMENT" \
-            --aws-region "${{ vars.AWS_REGION }}" \
-            --aws-account-id "${{ vars.AWS_ACCOUNT_ID }}"
+          rad credential register aws irsa             --iam-role "${{ vars.AWS_IAM_ROLE_ARN }}"
+          rad env update "$ENVIRONMENT"             --aws-region "${{ vars.AWS_REGION }}"             --aws-account-id "${{ vars.AWS_ACCOUNT_ID }}"
+
+      - name: Register terraform recipes from resource-types-contrib
+        run: |
+          REPO="${{ env.RESOURCE_TYPES_CONTRIB_REPO }}"
+          REF="${{ env.RESOURCE_TYPES_CONTRIB_REF }}"
+
+          rad recipe register default             --environment "$ENVIRONMENT"             --resource-type Radius.Compute/containerImages             --template-kind terraform             --template-path "git::$REPO//Compute/containerImages/recipes/kubernetes/terraform?ref=$REF"
+
+          rad recipe register default             --environment "$ENVIRONMENT"             --resource-type Radius.Compute/containers             --template-kind terraform             --template-path "git::$REPO//Compute/containers/recipes/kubernetes/terraform?ref=$REF"
+
+          rad recipe register default             --environment "$ENVIRONMENT"             --resource-type Radius.Compute/persistentVolumes             --template-kind terraform             --template-path "git::$REPO//Compute/persistentVolumes/recipes/kubernetes/terraform?ref=$REF"
+
+          rad recipe register default             --environment "$ENVIRONMENT"             --resource-type Radius.Compute/routes             --template-kind terraform             --template-path "git::$REPO//Compute/routes/recipes/kubernetes/terraform?ref=$REF"
+
+          rad recipe register default             --environment "$ENVIRONMENT"             --resource-type Radius.Data/postgreSqlDatabases             --template-kind terraform             --template-path "git::$REPO//Data/postgreSqlDatabases/recipes/kubernetes/terraform?ref=$REF"
+
+          rad recipe register default             --environment "$ENVIRONMENT"             --resource-type Radius.Security/secrets             --template-kind terraform             --template-path "git::$REPO//Security/secrets/recipes/kubernetes/terraform?ref=$REF"
 
       - name: Deploy application
         run: |
