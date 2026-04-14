@@ -166,7 +166,10 @@ jobs:
           ]'
           kubectl rollout status deployment/dynamic-rp -n radius-system --timeout=120s
 
-          # Verify docker and source are accessible
+          # Wait for the new pod to be fully ready before exec
+          kubectl wait --for=condition=Ready pod -n radius-system -l app.kubernetes.io/name=dynamic-rp --timeout=120s
+
+          # Verify docker is accessible
           POD=$(kubectl get pods -n radius-system -l app.kubernetes.io/name=dynamic-rp -o jsonpath='{.items[0].metadata.name}')
           kubectl exec -n radius-system "$POD" -c dynamic-rp -- docker version
 
