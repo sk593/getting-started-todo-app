@@ -249,6 +249,11 @@ jobs:
             for deploy in applications-rp dynamic-rp; do
               kubectl patch deployment $deploy -n radius-system --type=json -p="$PATCH"
             done
+
+            # Set KUBE_CONFIG_PATH on dynamic-rp so Terraform's kubernetes provider deploys to the target cluster
+            kubectl patch deployment dynamic-rp -n radius-system --type=json -p='[
+              {"op":"add","path":"/spec/template/spec/containers/0/env/-","value":{"name":"KUBE_CONFIG_PATH","value":"/etc/radius/target-kubeconfig/config"}}
+            ]'
           else
             # Secret updated — restart pods to pick up new token.
             kubectl rollout restart deployment/applications-rp -n radius-system
