@@ -318,6 +318,16 @@ jobs:
 
           rad recipe register default             --environment "$ENVIRONMENT"             --resource-type Radius.Security/secrets             --template-kind terraform             --template-path "git::$REPO//Security/secrets/recipes/kubernetes/terraform?ref=$REF"
 
+      - name: Pre-create app namespace on target cluster
+        run: |
+          TARGET_KUBECONFIG="$HOME/.kube/target-cluster"
+          if [ -f "$TARGET_KUBECONFIG" ]; then
+            # Namespace is <group>-<app>. Default group is "default".
+            APP_NS="default-$APP_NAME"
+            echo "Creating namespace $APP_NS on target cluster..."
+            kubectl --kubeconfig "$TARGET_KUBECONFIG" create namespace "$APP_NS" || true
+          fi
+
       - name: Deploy application
         run: |
           # Refresh the target kubeconfig secret with a fresh EKS token before deploying.
